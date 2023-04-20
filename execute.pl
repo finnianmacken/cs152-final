@@ -1,1 +1,0 @@
-:- generate_schedule(Cs, Vs).

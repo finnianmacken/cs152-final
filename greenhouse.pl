@@ -27,20 +27,19 @@ assign_variables(Cs, Vars) :-
         gardeners(Gardeners),
         maplist(constrain_gardener(Cs), Gardeners).
 
-
 constraints(Cs) :-
         % connects allocations to schedules
-        Goal = pod_allocation(Pod,Vegetable,Gardener,Times),
-        setof(pod_schedule(Pod,Vegetable,Gardener,Times), Goal, Cs0),
+        Goal = pod_allocation(Pod,Vegetable,Gardener,Weeks),
+        setof(pod_schedule(Pod,Vegetable,Gardener,Weeks), Goal, Cs0),
         maplist(timed_schedule, Cs0, Cs).
 
-timed_schedule(R, R-Slots) :- R = pod_schedule(_,_,_,Times), length(Slots, Times).
+timed_schedule(R, R-Slots) :- R = pod_schedule(_,_,_,Weeks), length(Slots, Weeks).
 
 pods(Pods) :-
-        setof(Pod, Vegetable^Times^Gardener^pod_allocation(Pod, Vegetable, Gardener, Times), Pods).
+        setof(Pod, Vegetable^Weeks^Gardener^pod_allocation(Pod, Vegetable, Gardener, Weeks), Pods).
 
 gardeners(Gardeners) :-
-        setof(Gardener, Pod^Vegetable^Times^pod_allocation(Pod, Vegetable, Gardener, Times), Gardeners).
+        setof(Gardener, Pod^Vegetable^Weeks^pod_allocation(Pod, Vegetable, Gardener, Weeks), Gardeners).
 
 integer_division(S, Q) :-
         slots_per_cycle(SPM),
@@ -52,22 +51,34 @@ extended_growth_pairs(Slots, F-S) :-
         nth0(S, Slots, S2),
         S2 #= S1 + 1.
 
-% extended_growth(Pod, Vegetable, F, S) :-
-%         vegetable_times(VegetableTimes),
+create_coupling(r(P, V), Value, r(P, V)-[Value-Y]) :-
+    Y #= Value + 1.
 
-%         pod_allocation(Pod, Vegetable, _Gardener, _Times)
-%         growing_cycle(Vegetable, Cycle),
-%         Cycle #= 2.
+generate_couplings(r(P, V, T), Couplings) :-
+    Range is T / 2, 
+    findall(X, between(0, Range, X), Y),
+    remove_second(Y, Couplings0),
+    maplist(create_coupling(r(P, V)), Couplings0, Couplings).
 
+generate_couplings_from_pods(Output) :-
+    % find all information about multi-week vegetables
+    findall(r(P,V,T), (pod_allocation(P, V, _Gardener, T), member__([r(P, broccoli, T)], r(P,V,T))), VTs),
+    % generate couplings for each one
+    maplist(generate_couplings, VTs, Output).
 
-constrain_vegetable_planting(pod_schedule(Pod,Vegetable,_Gardener,_Times)-Slots) :-
+extended_growth(Pod, Vegetable, F, S) :-
+    generate_couplings_from_pods(Output0),
+    flatten(Output0, Output),
+    member(r(Pod, Vegetable)-[F-S], Output).
+
+constrain_vegetable_planting(pod_schedule(Pod, Vegetable,_Gardener,_Weeks)-Slots) :-
         strictly_ascending(Slots),
         maplist(integer_division, Slots, Qs0),
 
         %% create extended growth period constraints
 
         % WORKSPACE
-        findall(r(V,T), pod_allocation(_Pod, V, _Gardener, T), VTs),
+        findall(r(P,V,T), (pod_allocation(P, V, _Gardener, T), member__([r(P, broccoli, T), r(P, potatoes, T)], r(P,V,T))), VTs),
         % END WORKSPACE
 
         findall(F-S, extended_growth(Pod, Vegetable, F, S), Gs),
@@ -105,9 +116,9 @@ constrain_gardener(Cs, Gardener) :-
 
 strictly_ascending(Ls) :- chain(#<, Ls).
 
-pod_req(G0, pod_schedule(G1, _Vegetable, _Gardener, _Times)-_, T) :- =(G0, G1, T).
+pod_req(G0, pod_schedule(G1, _Vegetable, _Gardener, _Weeks)-_, T) :- =(G0, G1, T).
 
-gardener_req(Ga0, pod_schedule(_Pod, _Vegetable, Ga1, _Times)-_, T) :- =(Ga0, Ga1,T).
+gardener_req(Ga0, pod_schedule(_Pod, _Vegetable, Ga1, _Weeks)-_, T) :- =(Ga0, Ga1,T).
 
 pairs_slots(Ps, ListVars) :-
         pairs_values(Ps, ListVars0),
