@@ -1,3 +1,4 @@
+% dynamic and discontiguous declarations
 :- dynamic(greenhouse_allocation/4).
 :- dynamic(extended_growth/4).
 :- dynamic(no_gardener/2).
@@ -9,10 +10,10 @@
 :- discontiguous(greenhouse_allocation/4).
 :- discontiguous(empty_greenhouse/2).
 
-requirements(Rs) :-
+constraints(Cs) :-
         Goal = greenhouse_allocation(Greenhouse,Vegetable,Gardener,Times),
         setof(greenhouse_schedule(Greenhouse,Vegetable,Gardener,Times), Goal, Rs0),
-        maplist(timed_schedule, Rs0, Rs).
+        maplist(timed_schedule, Rs0, Cs).
 
 timed_schedule(R, R-Slots) :- R = greenhouse_schedule(_,_,_,Times), length(Slots, Times).
 
@@ -26,69 +27,74 @@ soils(Soils) :-
         findall(Soil, soil_allocation(Soil, _Greenhouse, _Vegetable, _Slot), Soils0),
         sort(Soils0, Soils).
 
-requirements_variables(Rs, Vars) :-
-        requirements(Rs),
-        pairs_slots(Rs, Vars), 
+constraints_variables(Cs, Vars) :-
+        constraints(Cs),
+        pairs_slots(Cs, Vars), 
         slots_per_year(SPY),
         Max #= SPY - 1,
         Vars ins 0..Max,
-        maplist(constrain_vegetable_planting, Rs),
-        greenhouses(Greenhouses),
-        gardeners(Gardeners),
-        soils(Soils),
-        maplist(constrain_gardener(Rs), Gardeners),
-        maplist(constrain_greenhouse(Rs), Greenhouses),
-        maplist(constrain_soil(Rs), Soils).
+        maplist(constrain_vegetable_planting, Cs),
 
-slot_quotient(S, Q) :-
+        % apply constraints to scheduler components
+        greenhouses(Greenhouses),
+        maplist(constrain_greenhouse(Cs), Greenhouses),
+
+        gardeners(Gardeners),
+        maplist(constrain_gardener(Cs), Gardeners),
+
+        soils(Soils),
+        maplist(constrain_soil(Cs), Soils).
+
+quotient(S, Q) :-
         slots_per_month(SPM),
         Q #= S // SPM.
 
-list_without_nths(Es0, Ws, Es) :-
-        phrase(without_(Ws, 0, Es0), Es).
+remove_from_list(Es0, Ws, Es) :-
+        phrase(remove_(Ws, 0, Es0), Es).
 
-without_([], _, Es) --> seq(Es).
-without_([W|Ws], Pos0, [E|Es]) -->
+% uses dcgs for sequence generation
+remove_([], _, Es) --> seq(Es).
+remove_([W|Ws], Pos0, [E|Es]) -->
         { Pos #= Pos0 + 1,
           zcompare(R, W, Pos0) },
-        without_at_pos0(R, E, [W|Ws], Ws1),
-        without_(Ws1, Pos, Es).
+        remove_at_pos0(R, E, [W|Ws], Ws1),
+        remove_(Ws1, Pos, Es).
 
-without_at_pos0(=, _, [_|Ws], Ws) --> [].
-without_at_pos0(>, E, Ws0, Ws0) --> [E].
+remove_at_pos0(=, _, [_|Ws], Ws) --> [].
+remove_at_pos0(>, E, Ws0, Ws0) --> [E].
 
-slots_couplings(Slots, F-S) :-
+extended_growth_pairs(Slots, F-S) :-
         nth0(F, Slots, S1),
         nth0(S, Slots, S2),
         S2 #= S1 + 1.
 
-
-
 constrain_vegetable_planting(greenhouse_schedule(Greenhouse,Vegetable,_Gardener,_Times)-Slots) :-
         strictly_ascending(Slots),
-        maplist(slot_quotient, Slots, Qs0),
+        maplist(quotient, Slots, Qs0),
         findall(F-S, extended_growth(Greenhouse, Vegetable, F, S), Gs),
-        maplist(slots_couplings(Slots), Gs), 
+        
+        % deal with extended growth periods
+        maplist(extended_growth_pairs(Slots), Gs), 
         pairs_values(Gs, Seconds0),
         sort(Seconds0, Seconds),
-        list_without_nths(Qs0, Seconds, Qs),
+        remove_from_list(Qs0, Seconds, Qs),
         strictly_ascending(Qs).
 
-all_diff_from(Vs, F) :- maplist(#\=(F), Vs).
+all_diff_from(ListVars, F) :- maplist(#\=(F), ListVars).
 
-constrain_greenhouse(Rs, Greenhouse) :-
-        tfilter(greenhouse_req(Greenhouse), Rs, Sub),
-        pairs_slots(Sub, Vs),
-        all_different(Vs),
+constrain_greenhouse(Cs, Greenhouse) :-
+        tfilter(greenhouse_req(Greenhouse), Cs, Sub),
+        pairs_slots(Sub, ListVars),
+        all_different(ListVars),
         findall(S, empty_greenhouse(Greenhouse, S), Vacants),
-        maplist(all_diff_from(Vs), Vacants).
+        maplist(all_diff_from(ListVars), Vacants).
 
-constrain_gardener(Rs, Gardener) :-
-        tfilter(gardener_req(Gardener), Rs, Sub),
-        pairs_slots(Sub, Vs),
-        all_different(Vs),
+constrain_gardener(Cs, Gardener) :-
+        tfilter(gardener_req(Gardener), Cs, Sub),
+        pairs_slots(Sub, ListVars),
+        all_different(ListVars),
         findall(F, no_gardener(Gardener, F), Fs),
-        maplist(slot_quotient, Vs, Qs),
+        maplist(quotient, ListVars, Qs),
         maplist(all_diff_from(Qs), Fs).
 
 samesoil_var(Reqs, r(Greenhouse,Vegetable,Lesson), Var) :-
@@ -106,10 +112,10 @@ greenhouse_req(G0, greenhouse_schedule(G1, _Vegetable, _Gardener, _Times)-_, T) 
 
 gardener_req(Ga0, greenhouse_schedule(_Greenhouse, _Vegetable, Ga1, _Times)-_, T) :- =(Ga0, Ga1,T).
 
-pairs_slots(Ps, Vs) :-
-        pairs_values(Ps, Vs0),
-        append(Vs0, Vs).
+pairs_slots(Ps, ListVars) :-
+        pairs_values(Ps, ListVars0),
+        append(ListVars0, ListVars).
 
-generate_schedule(Rs, Vs) :-
-    requirements_variables(Rs, Vs),
-    labeling([ff], Vs); true.
+generate_schedule(Cs, ListVars) :-
+    constraints_variables(Cs, ListVars),
+    labeling([ff], ListVars); true. % true allo
